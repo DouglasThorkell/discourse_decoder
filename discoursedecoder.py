@@ -18,6 +18,31 @@ import sqlite3
 # Check SQLite version used by Python
 st.write(f"SQLite version in Python: {sqlite3.sqlite_version}")
 
+
+def initialize_vector_store():
+    """Initialize an in-memory FAISS vector store."""
+    embedding_model = OpenAIEmbeddings(openai_api_key=st.secrets["OPENAI_API_KEY"])
+    # Create a temporary FAISS vector store
+    vector_store = FAISS.from_texts(["Placeholder document"], embedding_model)
+    return vector_store, embedding_model
+
+def initialize_retrieval_chain(vector_store, embedding_model):
+    """Set up the retrieval chain."""
+    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+
+    # Use an OpenAI LLM as the conversational component
+    from langchain.chat_models import ChatOpenAI
+    llm = ChatOpenAI(temperature=0.7, openai_api_key=st.secrets["OPENAI_API_KEY"])
+    
+    # Set up a conversational retrieval chain
+    retrieval_chain = ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=retriever,
+        memory=memory
+    )
+    return retrieval_chain
+
 ## Get Valid URL Function ##
 def get_valid_url():
     url = st.text_input("Enter the URL of a webpage: ").strip()
@@ -28,20 +53,20 @@ def get_valid_url():
         return None
     return url
 
-## Fetch URL Function ##
 def fetch_url_content(url, retries=3, backoff_factor=1):
     for attempt in range(retries):
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
             response.raise_for_status()
+            if "text/html" not in response.headers["Content-Type"]:
+                st.warning("The URL does not point to an HTML document. Please provide a valid webpage URL.")
+                return None
             return response.text
         except requests.RequestException as e:
-            st.warning(f"**Attempt {attempt + 1}/{retries} failed:** {e}")
-            if attempt < retries - 1:
-                time.sleep(backoff_factor * (2 ** attempt))
-            else:
-                st.error("**Error fetching the URL:** All attempts failed. Please check the URL or try again later.")
-                return None
+            st.warning(f"Attempt {attempt + 1}/{retries} failed: {e}")
+            time.sleep(backoff_factor * (2 ** attempt))
+    st.error("Failed to fetch content after multiple attempts.")
+    return None
 
 ## Paragraph Based Chunking Function ##
 def paragraph_based_chunking(raw_text, max_chunk_size=3000, overlap=500):
@@ -67,7 +92,7 @@ def initialize_retrieval_chain_from_text(raw_text):
 
     openai_api_key = os.environ.get('openai_api_key')
     embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-    vector_store = FAISS.from_documents(chunks, embeddings)
+    vector_store = FAISS.from_texts([chunk.page_content for chunk in chunks], embeddings)
 
     llm = get_llm(temperature=0.7, model="gpt-4o-mini")
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
@@ -456,43 +481,57 @@ def main():
             5. Review the common ground and find actionable insights.
             """
         )
+def main():
+    st.title("Discourse Decoder")
 
-    ## Step 1: Getting a valid URL from the user ##
+    # Sidebar: Display information about the app
+    with st.sidebar:
+        st.title("About")
+        st.markdown(
+            """
+            **Discourse Decoder** helps analyze and debate arguments from articles or content.  
+            Features:
+            - Extract main arguments from a webpage.
+            - Simulate debates with supportive, opposing, and neutral perspectives.
+            - Identify common ground and actionable insights.
+            """
+        )
+
+   # Step 1: Input URL or content
     url = get_valid_url()
     if not url:
         return
 
-    ## Step 2: Fetching content from the URL ##
+    # Step 2: Fetch content from the URL
     with st.spinner("Fetching content..."):
         raw_content = fetch_url_content(url)
     if not raw_content:
-        st.error("Failed to fetch content from the URL. Exiting...")
+        st.error("Failed to fetch content. Exiting...")
         return
     st.success("Content fetched successfully!")
 
-    ## Step 3: Initializing retrieval chain ##
+    # Step 3: Initialize retrieval chain
     retrieval_chain = initialize_retrieval_chain_from_text(raw_content)
 
-    ## Step 4: Extracting main arguments dynamically ##
+    # Step 4: Extract main arguments dynamically
     if "article_arguments" not in st.session_state:
         with st.spinner("Extracting arguments..."):
             st.session_state.article_arguments = extract_main_arguments(retrieval_chain)
     st.subheader("Article")
     st.markdown(f"{st.session_state.article_arguments}")
 
-    ## Step 5: Extracting stances dynamically ##
+    # Step 5: Extract three stances dynamically
     if "stances" not in st.session_state:
         with st.spinner("Extracting stances..."):
             st.session_state.stances = extract_three_stances(retrieval_chain)
 
     stances = st.session_state.stances
 
-    st.subheader("Select a stance")
-    st.markdown("Select a stance based on the analysis:")
+    # Display stances and let the user select one
+    st.subheader("Select a Stance")
     st.markdown(f"1. **Supportive:** {stances['pro']}")
     st.markdown(f"2. **Opposing:** {stances['con']}")
     st.markdown(f"3. **Neutral:** {stances['middle']}")
-
     user_choice = st.radio("Enter the number of your choice:", ["1", "2", "3"])
 
     if st.button("Confirm Choice"):
@@ -501,11 +540,10 @@ def main():
         )
         st.success(f"You selected: {st.session_state.user_stance}")
 
-        ## Step 6: Debate Simulation ##
+        # Step 6: Debate simulation
         st.subheader("Debate Simulation")
 
         moderator_question = None
-        debate_transcript = []
         supporting_arguments = []
         opposing_arguments = []
 
@@ -514,33 +552,32 @@ def main():
                 st.markdown(f"### **Round {round_num}**")
 
                 with st.spinner(f"Processing Round {round_num}..."):
-
-                    ## Supporting Argument Crew ##
+                    # Supporting argument
                     supporting_inputs = {
                         "topic": st.session_state.article_arguments,
                         "objective": "Highlight the benefits",
-                        "moderator_question": moderator_question or ""
+                        "moderator_question": moderator_question or "",
                     }
                     if round_num > 1:
                         supporting_inputs["opposing_arguments"] = opposing_result.raw
                     supporting_result = supporting_crew.kickoff(supporting_inputs)
                     supporting_arguments.append(supporting_result.raw.strip())
 
-                    ## Opposing Argument Crew ##
+                    # Opposing argument
                     opposing_inputs = {
                         "topic": st.session_state.user_stance,
                         "objective": "Highlight the risks",
                         "supporting_argument": supporting_result.raw,
-                        "moderator_question": moderator_question or ""
+                        "moderator_question": moderator_question or "",
                     }
                     opposing_result = opposing_crew.kickoff(opposing_inputs)
                     opposing_arguments.append(opposing_result.raw.strip())
 
-                    ## Moderator Crew ##
+                    # Moderator summarization
                     moderation_inputs = {
                         "topic": st.session_state.article_arguments,
                         "supporting_argument": supporting_result.raw,
-                        "opposing_argument": opposing_result.raw
+                        "opposing_argument": opposing_result.raw,
                     }
                     moderation_result = moderation_crew.kickoff(moderation_inputs)
 
@@ -549,43 +586,30 @@ def main():
                     else:
                         moderator_question = None
 
-                    moderator_output_clean = moderation_result.raw.replace(
-                        f"**Moderator's Question:** {moderator_question}", "").strip()
-
+                    # Display results
                     col1, col2 = st.columns(2)
-
                     with col1:
                         st.markdown("#### **Article View**")
                         st.markdown(f"> {supporting_result.raw.strip()}")
-
                     with col2:
                         st.markdown("#### **Your View**")
                         st.markdown(f"> {opposing_result.raw.strip()}")
 
                     st.markdown("#### **Moderator's Perspective**")
-                    st.markdown(f"{moderator_output_clean}")
+                    st.markdown(moderation_result.raw)
 
-                    debate_transcript.append(f"**Round {round_num}**")
-                    debate_transcript.append(f"**Supporting View:** {supporting_result.raw.strip()}")
-                    debate_transcript.append(f"**Opposing View:** {opposing_result.raw.strip()}")
-                    debate_transcript.append(f"**Moderator View:** {moderator_output_clean}")
-
-                    if round_num < 3:
-                        debate_transcript.append(f"**Moderator's Question for Next Round:** {moderator_question}")
-                        st.markdown(f"#### **Moderator's Question for Next Round**")
-                        st.markdown(f"{moderator_question}")
-
-        ## Step 7: Find Common Ground ##
-        st.subheader("Potential Avenues for Reconciliation")
+        # Step 7: Identify common ground
+        st.subheader("Common Ground")
         with st.spinner("Analyzing common ground..."):
             common_ground = find_common_ground_debate(supporting_arguments, opposing_arguments)
         st.markdown(f"**Common Ground Identified:** {common_ground}")
 
-        ## Step 8: Generating Final Insight ##
+        # Step 8: Generate final insight
+        st.subheader("Final Insight")
         with st.spinner("Creating final insight..."):
             final_insight = generate_final_insight(common_ground)
-        st.subheader("Final Insight")
-        st.markdown(f"{final_insight}")
-
+        st.markdown(final_insight)
+        
+# Run the app
 if __name__ == "__main__":
     main()
