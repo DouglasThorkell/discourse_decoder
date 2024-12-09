@@ -5,7 +5,7 @@ import requests
 from langchain.schema import Document
 from langchain.chat_models import ChatOpenAI
 from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
+from langchain.vectorstores import Weaviate    
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from crewai import Agent, Task, Crew
@@ -13,6 +13,9 @@ from crewai_tools import ScrapeWebsiteTool, SerperDevTool
 from sentence_transformers import SentenceTransformer, util
 from langchain.schema import HumanMessage, SystemMessage
 import re
+
+# Connect to Weaviate instance
+client = weaviate.Client("http://localhost:8080")
 
 ## LLM initialization Function ##
 def get_llm(temperature, model):
@@ -72,7 +75,7 @@ def initialize_retrieval_chain_from_text(raw_text):
 
     openai_api_key = os.environ.get('openai_api_key')
     embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-    vector_store = FAISS.from_documents(chunks, embeddings)
+    ector_store = Weaviate(client, index_name="your-index-name", text_key="content", embedding_model=embeddings)
 
     llm = get_llm(temperature=0.7, model="gpt-4o-mini")
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
