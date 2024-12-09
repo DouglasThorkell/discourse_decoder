@@ -692,5 +692,5 @@ os.environ["SERPER_API_KEY"] = userdata.get('serper_api_key')
 # !npm audit fix --force
 
 ! wget -q -O - ipv4.icanhazip.com
-!streamlit run discoursedecoder.py &>/content/logs.txt &
+! streamlit run discoursedecoder.py &>/content/logs.txt &
 ! npx localtunnel --port 8501
