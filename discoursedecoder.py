@@ -1,4 +1,3 @@
-%%writefile /Users/Users/douglasthorkell/Desktop/Desktop/discoursedecoder.py
 import streamlit as st
 import os
 import time
