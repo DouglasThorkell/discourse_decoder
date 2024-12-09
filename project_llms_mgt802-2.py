@@ -81,11 +81,12 @@ https://www.usatoday.com/story/opinion/2019/05/22/alabama-abortion-ban-protect-b
 # %%capture
 # !pip install -qU crewai crewai_tools langchain langchain-openai sentence-transformers streamlit faiss-gpu httpx pypdf unstructured pypandoc
 
-from google.colab import userdata
 import os
+import streamlit as st
 
-os.environ['OPENAI_API_KEY'] = userdata.get('openai_api_key')
-os.environ["SERPER_API_KEY"] = userdata.get('serper_api_key')
+# Load API keys from secrets
+os.environ['OPENAI_API_KEY'] = st.secrets["OPENAI_API_KEY"]
+os.environ['SERPER_API_KEY'] = st.secrets["SERPER_API_KEY"]
 
 # Commented out IPython magic to ensure Python compatibility.
 # %%writefile discoursedecoder.py
