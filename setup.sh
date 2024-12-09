@@ -1,17 +1,22 @@
 #!/bin/bash
 
-# Install a specific version of SQLite
-wget https://www.sqlite.org/2023/sqlite-autoconf-3430100.tar.gz
-tar -xvf sqlite-autoconf-3430100.tar.gz
-cd sqlite-autoconf-3430100
+# Set up SQLite build directory
+SQLITE_VERSION=3430100
+SQLITE_NAME="sqlite-autoconf-${SQLITE_VERSION}"
+INSTALL_DIR="$HOME/.local"
 
-# Configure, build, and install SQLite
-./configure --prefix=$HOME/.local
+# Download and extract SQLite
+wget "https://www.sqlite.org/2023/${SQLITE_NAME}.tar.gz"
+tar -xvf "${SQLITE_NAME}.tar.gz"
+cd "${SQLITE_NAME}"
+
+# Build and install SQLite locally
+./configure --prefix="${INSTALL_DIR}"
 make
 make install
 
-# Update PATH to use the newly installed SQLite
-export PATH=$HOME/.local/bin:$PATH
+# Update PATH to prioritize locally installed SQLite
+export PATH="${INSTALL_DIR}/bin:$PATH"
 
-# Verify installation
+# Verify the installed version
 sqlite3 --version
