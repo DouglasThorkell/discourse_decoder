@@ -14,6 +14,14 @@ from crewai_tools import ScrapeWebsiteTool, SerperDevTool
 from sentence_transformers import SentenceTransformer, util
 from langchain.schema import HumanMessage, SystemMessage
 import re
+import subprocess
+
+# Ensure SQLite is updated
+if not os.path.exists("/usr/local/bin/sqlite3") or subprocess.run(["sqlite3", "--version"]).returncode != 0:
+    print("Upgrading SQLite...")
+    subprocess.run(["/bin/bash", "setup.sh"], check=True)
+else:
+    print("SQLite is already up-to-date.")
 
 ## LLM initialization Function ##
 def get_llm(temperature, model):
