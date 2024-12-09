@@ -39,7 +39,6 @@ def upgrade_sqlite():
 # Run the SQLite upgrade function
 upgrade_sqlite()
 
-
 ## Get Valid URL Function ##
 def get_valid_url():
     url = st.text_input("Enter the URL of a webpage: ").strip()
