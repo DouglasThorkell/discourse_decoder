@@ -1,5 +1,4 @@
 build-essential
-wget
 libreadline-dev
 zlib1g-dev
-libsqlite3-dev
+wget
