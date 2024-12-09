@@ -1,4 +1,3 @@
-import sqlite3
 import streamlit as st
 import os
 import time
@@ -15,22 +14,16 @@ from sentence_transformers import SentenceTransformer, util
 from langchain.schema import HumanMessage, SystemMessage
 import re
 import subprocess
+import sqlite3
 
-# Ensure SQLite is updated
-if not os.path.exists("/usr/local/bin/sqlite3") or subprocess.run(["sqlite3", "--version"]).returncode != 0:
-    print("Upgrading SQLite...")
-    subprocess.run(["/bin/bash", "setup.sh"], check=True)
+# Ensure the updated SQLite is installed
+if tuple(map(int, sqlite3.sqlite_version.split("."))) < (3, 35, 0):
+    st.write("Updating SQLite...")
+    result = subprocess.run(["bash", "setup.sh"], capture_output=True, text=True)
+    st.write(result.stdout)
+    st.write(result.stderr)
 else:
-    print("SQLite is already up-to-date.")
-
-## LLM initialization Function ##
-def get_llm(temperature, model):
-    my_api_key = os.environ.get('openai_api_key')
-    return ChatOpenAI(
-        api_key=my_api_key,
-        model_name=model,
-        temperature=temperature
-    )
+    st.write(f"SQLite version is already up-to-date: {sqlite3.sqlite_version}")
 
 ## Get Valid URL Function ##
 def get_valid_url():
