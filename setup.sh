@@ -11,3 +11,14 @@ make install
 
 # Verify SQLite build
 $HOME/.local/bin/sqlite3 --version
+
+# Clone pysqlite3 repository
+git clone https://github.com/coleifer/pysqlite3.git
+cd pysqlite3
+
+# Copy SQLite amalgamation files into the pysqlite3 directory
+cp ../sqlite-autoconf-3430100/sqlite3.[ch] .
+
+# Build pysqlite3 using the custom SQLite files
+python setup.py build_static build
+python setup.py install --user
