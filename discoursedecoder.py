@@ -13,31 +13,10 @@ from crewai_tools import ScrapeWebsiteTool, SerperDevTool
 from sentence_transformers import SentenceTransformer, util
 from langchain.schema import HumanMessage, SystemMessage
 import re
-import subprocess
 import sqlite3
 
-def upgrade_sqlite():
-    # Path to the setup script
-    setup_script = "./setup.sh"
-
-    # Check if SQLite is up-to-date
-    current_version = tuple(map(int, sqlite3.sqlite_version.split(".")))
-    required_version = (3, 35, 0)
-
-    if current_version < required_version:
-        st.write(f"Upgrading SQLite from {sqlite3.sqlite_version} to >= 3.35.0...")
-        try:
-            # Run the setup script
-            result = subprocess.run(["bash", setup_script], capture_output=True, text=True, check=True)
-            st.write(result.stdout)
-            st.write(result.stderr)
-        except subprocess.CalledProcessError as e:
-            st.error(f"SQLite upgrade failed: {e.stderr}")
-    else:
-        st.write(f"SQLite is up-to-date: {sqlite3.sqlite_version}")
-
-# Run the SQLite upgrade function
-upgrade_sqlite()
+# Check SQLite version used by Python
+st.write(f"SQLite version in Python: {sqlite3.sqlite_version}")
 
 ## Get Valid URL Function ##
 def get_valid_url():
