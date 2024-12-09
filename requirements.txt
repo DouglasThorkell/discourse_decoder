@@ -4,7 +4,7 @@ sentence-transformers
 crewai
 openai
 requests
-faiss-cpu
+weaviate-client
 pysqlite3-binary
 plotly
 networkx
