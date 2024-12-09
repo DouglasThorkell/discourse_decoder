@@ -5,3 +5,4 @@ crewai
 openai
 requests
 faiss-cpu
+pysqlite3-binary
