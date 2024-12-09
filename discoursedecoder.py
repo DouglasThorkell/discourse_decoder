@@ -13,35 +13,15 @@ from crewai_tools import ScrapeWebsiteTool, SerperDevTool
 from sentence_transformers import SentenceTransformer, util
 from langchain.schema import HumanMessage, SystemMessage
 import re
-import sqlite3
 
-# Check SQLite version used by Python
-st.write(f"SQLite version in Python: {sqlite3.sqlite_version}")
-
-
-def initialize_vector_store():
-    """Initialize an in-memory FAISS vector store."""
-    embedding_model = OpenAIEmbeddings(openai_api_key=st.secrets["OPENAI_API_KEY"])
-    # Create a temporary FAISS vector store
-    vector_store = FAISS.from_texts(["Placeholder document"], embedding_model)
-    return vector_store, embedding_model
-
-def initialize_retrieval_chain(vector_store, embedding_model):
-    """Set up the retrieval chain."""
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
-
-    # Use an OpenAI LLM as the conversational component
-    from langchain.chat_models import ChatOpenAI
-    llm = ChatOpenAI(temperature=0.7, openai_api_key=st.secrets["OPENAI_API_KEY"])
-    
-    # Set up a conversational retrieval chain
-    retrieval_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        memory=memory
+## LLM initialization Function ##
+def get_llm(temperature, model):
+    my_api_key = os.environ.get('openai_api_key')
+    return ChatOpenAI(
+        api_key=my_api_key,
+        model_name=model,
+        temperature=temperature
     )
-    return retrieval_chain
 
 ## Get Valid URL Function ##
 def get_valid_url():
@@ -53,20 +33,20 @@ def get_valid_url():
         return None
     return url
 
+## Fetch URL Function ##
 def fetch_url_content(url, retries=3, backoff_factor=1):
     for attempt in range(retries):
         try:
-            response = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
-            if "text/html" not in response.headers["Content-Type"]:
-                st.warning("The URL does not point to an HTML document. Please provide a valid webpage URL.")
-                return None
             return response.text
         except requests.RequestException as e:
-            st.warning(f"Attempt {attempt + 1}/{retries} failed: {e}")
-            time.sleep(backoff_factor * (2 ** attempt))
-    st.error("Failed to fetch content after multiple attempts.")
-    return None
+            st.warning(f"**Attempt {attempt + 1}/{retries} failed:** {e}")
+            if attempt < retries - 1:
+                time.sleep(backoff_factor * (2 ** attempt))
+            else:
+                st.error("**Error fetching the URL:** All attempts failed. Please check the URL or try again later.")
+                return None
 
 ## Paragraph Based Chunking Function ##
 def paragraph_based_chunking(raw_text, max_chunk_size=3000, overlap=500):
@@ -92,7 +72,7 @@ def initialize_retrieval_chain_from_text(raw_text):
 
     openai_api_key = os.environ.get('openai_api_key')
     embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-    vector_store = FAISS.from_texts([chunk.page_content for chunk in chunks], embeddings)
+    vector_store = FAISS.from_documents(chunks, embeddings)
 
     llm = get_llm(temperature=0.7, model="gpt-4o-mini")
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
@@ -325,17 +305,26 @@ moderation_crew = Crew(
     tasks=[moderator_task, question_analyst_task, summary_writer_task],
     verbose=False
 )
+from sentence_transformers import SentenceTransformer, util
+from langchain.schema import HumanMessage, SystemMessage
 
-## Finding Common Ground Function ##
-def find_common_ground_debate(supporting_arguments, opposing_arguments, similarity_threshold=0.7):
+def find_common_ground_debate(supporting_arguments, opposing_arguments, similarity_threshold=0.5):
     if not supporting_arguments or not opposing_arguments:
-        return "No significant common ground could be identified across the debate rounds."
+        return {
+            "common_ground": "No significant common ground could be identified across the debate rounds.",
+            "similarity_scores": [],
+            "node_pairs": []
+        }
 
     ## Sentence Transformer Model ##
     try:
         model = SentenceTransformer('all-MiniLM-L6-v2')
     except Exception as e:
-        return f"Error loading model: {str(e)}"
+        return {
+            "common_ground": f"Error loading model: {str(e)}",
+            "similarity_scores": [],
+            "node_pairs": []
+        }
 
     all_supporting_sentences = []
     all_opposing_sentences = []
@@ -351,25 +340,46 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
         supporting_embeddings = model.encode(all_supporting_sentences, convert_to_tensor=True)
         opposing_embeddings = model.encode(all_opposing_sentences, convert_to_tensor=True)
     except Exception as e:
-        return f"Error computing embeddings: {str(e)}"
+        return {
+            "common_ground": f"Error computing embeddings: {str(e)}",
+            "similarity_scores": [],
+            "node_pairs": []
+        }
 
     similarity_matrix = util.cos_sim(supporting_embeddings, opposing_embeddings)
 
+    # Generate node_pairs and similarity_scores
     common_ground_pairs = []
+    node_pairs = []
+    similarity_scores = []
+
     for i, supporting_sentence in enumerate(all_supporting_sentences):
         for j, opposing_sentence in enumerate(all_opposing_sentences):
-            if similarity_matrix[i][j] >= similarity_threshold:
+            similarity_score = similarity_matrix[i][j].item()
+            print(f"Pair: Support-{i}: {supporting_sentence} | Oppose-{j}: {opposing_sentence}")
+            print(f"Similarity Score: {similarity_score}")
+
+            # Validate that node indices are within bounds
+            if i >= len(supporting_arguments) or j >= len(opposing_arguments):
+                continue  # Skip this pair if indices are invalid
+
+            # Only add pairs with similarity above the threshold
+            if similarity_score >= similarity_threshold:
                 pair = (
                     supporting_sentence.split(": ")[-1],
                     opposing_sentence.split(": ")[-1],
-                    similarity_matrix[i][j].item()
+                    similarity_score
                 )
                 common_ground_pairs.append(pair)
+                node_pairs.append((f"support-{i}", f"oppose-{j}"))
+                similarity_scores.append(similarity_score)
 
     if common_ground_pairs:
+        # Extract unique themes from supporting sentences
         themes = [pair[0] for pair in common_ground_pairs]
         unique_themes = list(set(themes))
 
+        # Use the LLM to summarize common ground themes
         llm = get_llm(temperature=0.7, model="gpt-4o-mini")
 
         prompt = (
@@ -392,15 +402,26 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
             response = llm(messages)
 
             if hasattr(response, "content"):
-                return response.content
+                common_ground_summary = response.content
             elif isinstance(response, str):
-                return response
+                common_ground_summary = response
             else:
-                return "Unexpected response format from the LLM."
+                common_ground_summary = "Unexpected response format from the LLM."
         except Exception as e:
-            return f"Error generating response from LLM: {str(e)}"
+            common_ground_summary = f"Error generating response from LLM: {str(e)}"
     else:
-        return "No significant common ground could be identified across the debate rounds."
+        return {
+            "common_ground": "No significant common ground could be identified across the debate rounds.",
+            "similarity_scores": [],
+            "node_pairs": []
+        }
+
+    # Return results as a dictionary
+    return {
+        "common_ground": common_ground_summary,
+        "similarity_scores": similarity_scores,
+        "node_pairs": node_pairs
+    }
 
 ## Final Insight Function ##
 def generate_final_insight(common_ground):
@@ -454,6 +475,104 @@ def generate_final_insight(common_ground):
 
     return final_insight
 
+import plotly.graph_objects as go
+import networkx as nx
+
+def compute_layout_with_similarity(node_pairs, similarity_scores):
+    """
+    Computes node positions using a spring layout that factors in cosine similarity.
+
+    Args:
+        node_pairs: List of tuples representing edges (e.g., [("support-0", "oppose-1")]).
+        similarity_scores: List of similarity scores corresponding to the edges.
+
+    Returns:
+        positions: Dictionary of node positions for visualization.
+    """
+    # Create a weighted graph
+    G = nx.Graph()
+    for (source, target), weight in zip(node_pairs, similarity_scores):
+        G.add_edge(source, target, weight=weight)
+
+    # Compute positions using spring layout with cosine similarity as edge weights
+    positions = nx.spring_layout(G, weight="weight", seed=42, k=0.5)  # Adjust 'k' for tighter/looser clustering
+    return positions
+
+def create_pretty_argument_map(node_pairs, similarity_scores, positions):
+    """
+    Visualizes an argument map using precomputed positions from a layout algorithm,
+    with enhanced aesthetics and restricted interactivity.
+
+    Args:
+        node_pairs: List of tuples representing edges.
+        similarity_scores: List of cosine similarity scores for edge weights.
+        positions: Dictionary of node positions.
+
+    Returns:
+        Plotly figure representing the argument map.
+    """
+    fig = go.Figure()
+
+    # Add edges with enhanced visualization
+    for (source, target), weight in zip(node_pairs, similarity_scores):
+        x_start, y_start = positions[source]
+        x_end, y_end = positions[target]
+        fig.add_trace(go.Scatter(
+            x=[x_start, x_end, None],
+            y=[y_start, y_end, None],
+            mode="lines",
+            line=dict(
+                width=5 + weight * 10,  # Thicker lines for higher similarity
+                color=f"rgba(50, 50, 150, {weight})"  # Subtle color with transparency
+            ),
+            showlegend=False
+        ))
+
+    # Add nodes with refined aesthetics
+    for node, (x, y) in positions.items():
+        fig.add_trace(go.Scatter(
+            x=[x], y=[y],
+            mode="markers+text",
+            text=[node],  # Node labels
+            marker=dict(
+                size=20,  # Larger nodes for better visibility
+                color=("rgba(100, 150, 255, 0.9)" if node.startswith("support") else 
+                       "rgba(255, 100, 100, 0.9)" if node.startswith("oppose") else 
+                       "rgba(100, 255, 150, 0.9)"),  # Custom color for each node type
+                line=dict(width=2, color="black")  # Border around nodes
+            ),
+            textfont=dict(size=12, color="black"),  # Label font styling
+            hoverinfo="text"
+        ))
+
+    # Update layout for a more polished look
+    fig.update_layout(
+        title=dict(
+            font=dict(size=24, color="black"),  # Title font
+            x=0.5,  # Center the title
+        ),
+        xaxis=dict(showgrid=False, zeroline=False, visible=False),
+        yaxis=dict(showgrid=False, zeroline=False, visible=False),
+        dragmode="orbit",  # Allow only orbit/rotation
+        scene=dict(
+            camera=dict(
+                up=dict(x=0, y=0, z=1),  # Orbit around the z-axis
+                center=dict(x=0, y=0, z=0),  # Camera center
+                eye=dict(x=1.25, y=1.25, z=1.25)  # Default zoom position
+            ),
+            aspectmode="cube"  # Keep equal aspect ratio
+        ),
+        margin=dict(l=0, r=0, t=40, b=0),  # Minimal margins
+        showlegend=False  # Disable legend for simplicity
+    )
+
+    # Remove unnecessary modebar buttons
+    fig.update_layout(
+        modebar_remove=["zoom", "pan", "select", "lasso", "reset"]
+    )
+
+    return fig
+
 ## Main Function ##
 def main():
 
@@ -481,57 +600,43 @@ def main():
             5. Review the common ground and find actionable insights.
             """
         )
-def main():
-    st.title("Discourse Decoder")
 
-    # Sidebar: Display information about the app
-    with st.sidebar:
-        st.title("About")
-        st.markdown(
-            """
-            **Discourse Decoder** helps analyze and debate arguments from articles or content.  
-            Features:
-            - Extract main arguments from a webpage.
-            - Simulate debates with supportive, opposing, and neutral perspectives.
-            - Identify common ground and actionable insights.
-            """
-        )
-
-   # Step 1: Input URL or content
+    ## Step 1: Getting a valid URL from the user ##
     url = get_valid_url()
     if not url:
         return
 
-    # Step 2: Fetch content from the URL
+    ## Step 2: Fetching content from the URL ##
     with st.spinner("Fetching content..."):
         raw_content = fetch_url_content(url)
     if not raw_content:
-        st.error("Failed to fetch content. Exiting...")
+        st.error("Failed to fetch content from the URL. Exiting...")
         return
     st.success("Content fetched successfully!")
 
-    # Step 3: Initialize retrieval chain
+    ## Step 3: Initializing retrieval chain ##
     retrieval_chain = initialize_retrieval_chain_from_text(raw_content)
 
-    # Step 4: Extract main arguments dynamically
+    ## Step 4: Extracting main arguments dynamically ##
     if "article_arguments" not in st.session_state:
         with st.spinner("Extracting arguments..."):
             st.session_state.article_arguments = extract_main_arguments(retrieval_chain)
     st.subheader("Article")
     st.markdown(f"{st.session_state.article_arguments}")
 
-    # Step 5: Extract three stances dynamically
+    ## Step 5: Extracting stances dynamically ##
     if "stances" not in st.session_state:
         with st.spinner("Extracting stances..."):
             st.session_state.stances = extract_three_stances(retrieval_chain)
 
     stances = st.session_state.stances
 
-    # Display stances and let the user select one
-    st.subheader("Select a Stance")
+    st.subheader("Select a stance")
+    st.markdown("Select a stance based on the analysis:")
     st.markdown(f"1. **Supportive:** {stances['pro']}")
     st.markdown(f"2. **Opposing:** {stances['con']}")
     st.markdown(f"3. **Neutral:** {stances['middle']}")
+
     user_choice = st.radio("Enter the number of your choice:", ["1", "2", "3"])
 
     if st.button("Confirm Choice"):
@@ -540,10 +645,11 @@ def main():
         )
         st.success(f"You selected: {st.session_state.user_stance}")
 
-        # Step 6: Debate simulation
+        ## Step 6: Debate Simulation ##
         st.subheader("Debate Simulation")
 
         moderator_question = None
+        debate_transcript = []
         supporting_arguments = []
         opposing_arguments = []
 
@@ -552,32 +658,33 @@ def main():
                 st.markdown(f"### **Round {round_num}**")
 
                 with st.spinner(f"Processing Round {round_num}..."):
-                    # Supporting argument
+
+                    ## Supporting Argument Crew ##
                     supporting_inputs = {
                         "topic": st.session_state.article_arguments,
                         "objective": "Highlight the benefits",
-                        "moderator_question": moderator_question or "",
+                        "moderator_question": moderator_question or ""
                     }
                     if round_num > 1:
                         supporting_inputs["opposing_arguments"] = opposing_result.raw
                     supporting_result = supporting_crew.kickoff(supporting_inputs)
                     supporting_arguments.append(supporting_result.raw.strip())
 
-                    # Opposing argument
+                    ## Opposing Argument Crew ##
                     opposing_inputs = {
                         "topic": st.session_state.user_stance,
                         "objective": "Highlight the risks",
                         "supporting_argument": supporting_result.raw,
-                        "moderator_question": moderator_question or "",
+                        "moderator_question": moderator_question or ""
                     }
                     opposing_result = opposing_crew.kickoff(opposing_inputs)
                     opposing_arguments.append(opposing_result.raw.strip())
 
-                    # Moderator summarization
+                    ## Moderator Crew ##
                     moderation_inputs = {
                         "topic": st.session_state.article_arguments,
                         "supporting_argument": supporting_result.raw,
-                        "opposing_argument": opposing_result.raw,
+                        "opposing_argument": opposing_result.raw
                     }
                     moderation_result = moderation_crew.kickoff(moderation_inputs)
 
@@ -586,30 +693,75 @@ def main():
                     else:
                         moderator_question = None
 
-                    # Display results
+                    moderator_output_clean = moderation_result.raw.replace(
+                        f"**Moderator's Question:** {moderator_question}", "").strip()
+
                     col1, col2 = st.columns(2)
+
                     with col1:
                         st.markdown("#### **Article View**")
                         st.markdown(f"> {supporting_result.raw.strip()}")
+
                     with col2:
-                        st.markdown("#### **Your View**")
+                        st.markdown("#### **Your Advocate**")
                         st.markdown(f"> {opposing_result.raw.strip()}")
 
                     st.markdown("#### **Moderator's Perspective**")
-                    st.markdown(moderation_result.raw)
+                    st.markdown(f"{moderator_output_clean}")
 
-        # Step 7: Identify common ground
-        st.subheader("Common Ground")
+                    debate_transcript.append(f"**Round {round_num}**")
+                    debate_transcript.append(f"**Supporting View:** {supporting_result.raw.strip()}")
+                    debate_transcript.append(f"**Opposing View:** {opposing_result.raw.strip()}")
+                    debate_transcript.append(f"**Moderator View:** {moderator_output_clean}")
+
+                    if round_num < 3:
+                        debate_transcript.append(f"**Moderator's Question for Next Round:** {moderator_question}")
+                        st.markdown(f"#### **Moderator's Question for Next Round**")
+                        st.markdown(f"{moderator_question}")
+
+        # Step 7: Find Common Ground
+        st.subheader("Potential Avenues for Reconciliation")
         with st.spinner("Analyzing common ground..."):
-            common_ground = find_common_ground_debate(supporting_arguments, opposing_arguments)
-        st.markdown(f"**Common Ground Identified:** {common_ground}")
+            # Find common ground and calculate similarities
+            common_ground_result = find_common_ground_debate(supporting_arguments, opposing_arguments)
 
-        # Step 8: Generate final insight
-        st.subheader("Final Insight")
+            if not common_ground_result["similarity_scores"] or not common_ground_result["node_pairs"]:
+                # Warn user if no meaningful connections are found
+                st.warning("No significant common ground or relationships could be visualized.")
+                st.markdown("This indicates strongly polarized views or insufficient overlap between arguments.")
+            else:
+                # Display the identified common ground summary
+                st.subheader("Identified Common Ground")
+                st.markdown(common_ground_result["common_ground"])
+
+        # Step 8: Visualize Argument Map with Enhanced Aesthetics
+        if common_ground_result["similarity_scores"] and common_ground_result["node_pairs"]:
+            st.subheader("Argument Map Visualization")
+
+            # Compute layout based on cosine similarity
+            positions = compute_layout_with_similarity(
+                node_pairs=common_ground_result["node_pairs"],
+                similarity_scores=common_ground_result["similarity_scores"]
+            )
+
+            # Create the argument map visualization with enhanced aesthetics
+            fig = create_pretty_argument_map(
+                node_pairs=common_ground_result["node_pairs"],
+                similarity_scores=common_ground_result["similarity_scores"],
+                positions=positions
+            )
+
+            # Display the plot with only rotation allowed
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No connections found for visualization.")
+
+
+        ## Step 9: Generating Final Insight ##
         with st.spinner("Creating final insight..."):
-            final_insight = generate_final_insight(common_ground)
-        st.markdown(final_insight)
-        
-# Run the app
+            final_insight = generate_final_insight(common_ground_result["common_ground"])
+        st.subheader("Final Insight")
+        st.markdown(f"{final_insight}")
+
 if __name__ == "__main__":
     main()
