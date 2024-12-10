@@ -1,10 +1,12 @@
 streamlit
+os
+time
 langchain
 sentence-transformers
 crewai
 openai
 requests
-weaviate-client
 pysqlite3-binary
 plotly
 networkx
+re
