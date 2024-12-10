@@ -6,7 +6,7 @@ sentence-transformers
 crewai
 openai
 requests
-pysqlite3-binary
 plotly
 networkx
 re
+pysqlite3-binary
