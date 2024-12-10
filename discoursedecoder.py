@@ -1,3 +1,4 @@
+# Import necessary libraries
 import streamlit as st
 import os
 import time
@@ -5,7 +6,7 @@ import requests
 from langchain.schema import Document
 from langchain.chat_models import ChatOpenAI
 from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.vectorstores import Weaviate    
+from langchain.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from crewai import Agent, Task, Crew
@@ -13,9 +14,8 @@ from crewai_tools import ScrapeWebsiteTool, SerperDevTool
 from sentence_transformers import SentenceTransformer, util
 from langchain.schema import HumanMessage, SystemMessage
 import re
-
-# Connect to Weaviate instance
-client = weaviate.Client("http://localhost:8080")
+import plotly.graph_objects as go
+import networkx as nx
 
 ## LLM initialization Function ##
 def get_llm(temperature, model):
@@ -75,7 +75,7 @@ def initialize_retrieval_chain_from_text(raw_text):
 
     openai_api_key = os.environ.get('openai_api_key')
     embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-    ector_store = Weaviate(client, index_name="your-index-name", text_key="content", embedding_model=embeddings)
+    vector_store = FAISS.from_documents(chunks, embeddings)
 
     llm = get_llm(temperature=0.7, model="gpt-4o-mini")
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
@@ -137,7 +137,6 @@ def extract_three_stances(retrieval_chain):
     results = {}
     for key, prompt in prompts.items():
         response = retrieval_chain({"question": prompt})["answer"]
-        st.write(f"Raw Response for `{key}`: {response}")
 
         if ":" in response and response.lower().startswith("a user-centered statement"):
             response = response.split(":", 1)[-1].strip()
@@ -180,7 +179,7 @@ supporting_researcher = Agent(
 )
 supporting_debater = Agent(
     role="Supporting Debater",
-    goal="Combine the Writer's argument and the Researcher's evidence into a clear, final 100-word argument supporting {topic}.",
+    goal="Combine the Writer's arguments and the Researcher's numerical evidence into a clear, final 100-word argument supporting {topic}.",
     backstory="You are responsible for presenting the Supporting Crew's final argument in a concise and compelling manner.",
     allow_delegation=False,
     verbose=False
@@ -229,7 +228,7 @@ opposing_researcher = Agent(
 )
 opposing_debater = Agent(
     role="Opposing Debater",
-    goal="Combine the Writer's counterargument and the Researcher's evidence into a clear, final 100-word argument opposing {topic}.",
+    goal="Combine the Writer's counterargument and the Researcher's numerical evidence into a clear, final 100-word argument opposing {topic}.",
     backstory="You are responsible for presenting the Opposing Crew's final argument in a concise and compelling manner.",
     allow_delegation=False,
     verbose=False
@@ -259,7 +258,6 @@ opposing_crew = Crew(
     tasks=[opposing_writer_task, opposing_researcher_task, opposing_debater_task],
     verbose=False
 )
-
 ## Moderator Crew ##
 moderator = Agent(
     role="Moderator",
@@ -308,9 +306,8 @@ moderation_crew = Crew(
     tasks=[moderator_task, question_analyst_task, summary_writer_task],
     verbose=False
 )
-from sentence_transformers import SentenceTransformer, util
-from langchain.schema import HumanMessage, SystemMessage
 
+## Common Ground Debate Function ##
 def find_common_ground_debate(supporting_arguments, opposing_arguments, similarity_threshold=0.5):
     if not supporting_arguments or not opposing_arguments:
         return {
@@ -351,7 +348,6 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
 
     similarity_matrix = util.cos_sim(supporting_embeddings, opposing_embeddings)
 
-    # Generate node_pairs and similarity_scores
     common_ground_pairs = []
     node_pairs = []
     similarity_scores = []
@@ -360,13 +356,11 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
         for j, opposing_sentence in enumerate(all_opposing_sentences):
             similarity_score = similarity_matrix[i][j].item()
             print(f"Pair: Support-{i}: {supporting_sentence} | Oppose-{j}: {opposing_sentence}")
-            print(f"Similarity Score: {similarity_score}")
+            print(f"Similarity Score: {similarity_score}"
 
-            # Validate that node indices are within bounds
             if i >= len(supporting_arguments) or j >= len(opposing_arguments):
-                continue  # Skip this pair if indices are invalid
+                continue
 
-            # Only add pairs with similarity above the threshold
             if similarity_score >= similarity_threshold:
                 pair = (
                     supporting_sentence.split(": ")[-1],
@@ -378,11 +372,9 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
                 similarity_scores.append(similarity_score)
 
     if common_ground_pairs:
-        # Extract unique themes from supporting sentences
         themes = [pair[0] for pair in common_ground_pairs]
         unique_themes = list(set(themes))
 
-        # Use the LLM to summarize common ground themes
         llm = get_llm(temperature=0.7, model="gpt-4o-mini")
 
         prompt = (
@@ -419,7 +411,6 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
             "node_pairs": []
         }
 
-    # Return results as a dictionary
     return {
         "common_ground": common_ground_summary,
         "similarity_scores": similarity_scores,
@@ -478,45 +469,21 @@ def generate_final_insight(common_ground):
 
     return final_insight
 
-import plotly.graph_objects as go
-import networkx as nx
-
+### Visualization Layout Function ##
 def compute_layout_with_similarity(node_pairs, similarity_scores):
-    """
-    Computes node positions using a spring layout that factors in cosine similarity.
 
-    Args:
-        node_pairs: List of tuples representing edges (e.g., [("support-0", "oppose-1")]).
-        similarity_scores: List of similarity scores corresponding to the edges.
-
-    Returns:
-        positions: Dictionary of node positions for visualization.
-    """
-    # Create a weighted graph
     G = nx.Graph()
     for (source, target), weight in zip(node_pairs, similarity_scores):
         G.add_edge(source, target, weight=weight)
 
-    # Compute positions using spring layout with cosine similarity as edge weights
-    positions = nx.spring_layout(G, weight="weight", seed=42, k=0.5)  # Adjust 'k' for tighter/looser clustering
+    positions = nx.spring_layout(G, weight="weight", seed=42, k=0.6)
     return positions
 
+## Figure Function ##
 def create_pretty_argument_map(node_pairs, similarity_scores, positions):
-    """
-    Visualizes an argument map using precomputed positions from a layout algorithm,
-    with enhanced aesthetics and restricted interactivity.
 
-    Args:
-        node_pairs: List of tuples representing edges.
-        similarity_scores: List of cosine similarity scores for edge weights.
-        positions: Dictionary of node positions.
-
-    Returns:
-        Plotly figure representing the argument map.
-    """
     fig = go.Figure()
 
-    # Add edges with enhanced visualization
     for (source, target), weight in zip(node_pairs, similarity_scores):
         x_start, y_start = positions[source]
         x_end, y_end = positions[target]
@@ -525,55 +492,49 @@ def create_pretty_argument_map(node_pairs, similarity_scores, positions):
             y=[y_start, y_end, None],
             mode="lines",
             line=dict(
-                width=5 + weight * 10,  # Thicker lines for higher similarity
-                color=f"rgba(50, 50, 150, {weight})"  # Subtle color with transparency
-            ),
+                width=5 + weight * 10,
+                color="lightgrey"
             showlegend=False
         ))
 
-    # Add nodes with refined aesthetics
     for node, (x, y) in positions.items():
         fig.add_trace(go.Scatter(
             x=[x], y=[y],
             mode="markers+text",
-            text=[node],  # Node labels
+            text=[node],
             marker=dict(
-                size=20,  # Larger nodes for better visibility
-                color=("rgba(100, 150, 255, 0.9)" if node.startswith("support") else 
-                       "rgba(255, 100, 100, 0.9)" if node.startswith("oppose") else 
-                       "rgba(100, 255, 150, 0.9)"),  # Custom color for each node type
-                line=dict(width=2, color="black")  # Border around nodes
+                size=20,
+                color=("lightblue" if node.startswith("oppose") else
+                       "orange" if node.startswith("support") else
+                       "lightgreen"),
+                line=dict(width=2, color="black")
             ),
-            textfont=dict(size=12, color="black"),  # Label font styling
-            hoverinfo="text"
+            textfont=dict(size=15, color="black"),
+            hoverinfo="text",
+            showlegend=False
         ))
 
-    # Update layout for a more polished look
     fig.update_layout(
         title=dict(
-            font=dict(size=24, color="black"),  # Title font
-            x=0.5,  # Center the title
+            text="",
+            font=dict(size=24, color="black"),
+            x=0.5
         ),
         xaxis=dict(showgrid=False, zeroline=False, visible=False),
         yaxis=dict(showgrid=False, zeroline=False, visible=False),
-        dragmode="orbit",  # Allow only orbit/rotation
         scene=dict(
             camera=dict(
-                up=dict(x=0, y=0, z=1),  # Orbit around the z-axis
-                center=dict(x=0, y=0, z=0),  # Camera center
-                eye=dict(x=1.25, y=1.25, z=1.25)  # Default zoom position
+                up=dict(x=0, y=0, z=1),
+                center=dict(x=0, y=0, z=0),
+                eye=dict(x=1.25, y=1.25, z=1.25)
             ),
-            aspectmode="cube"  # Keep equal aspect ratio
+            aspectmode="cube"
         ),
-        margin=dict(l=0, r=0, t=40, b=0),  # Minimal margins
-        showlegend=False  # Disable legend for simplicity
+        dragmode="orbit",
+        margin=dict(l=0, r=0, t=40, b=0),
+        showlegend=False,
+        modebar_remove=["zoom", "pan", "select", "lasso", "reset", "autoScale"]
     )
-
-    # Remove unnecessary modebar buttons
-    fig.update_layout(
-        modebar_remove=["zoom", "pan", "select", "lasso", "reset"]
-    )
-
     return fig
 
 ## Main Function ##
@@ -722,43 +683,43 @@ def main():
                         st.markdown(f"#### **Moderator's Question for Next Round**")
                         st.markdown(f"{moderator_question}")
 
-        # Step 7: Find Common Ground
+        ## Step 7: Find Common Ground ##
         st.subheader("Potential Avenues for Reconciliation")
         with st.spinner("Analyzing common ground..."):
-            # Find common ground and calculate similarities
             common_ground_result = find_common_ground_debate(supporting_arguments, opposing_arguments)
 
             if not common_ground_result["similarity_scores"] or not common_ground_result["node_pairs"]:
-                # Warn user if no meaningful connections are found
+
                 st.warning("No significant common ground or relationships could be visualized.")
                 st.markdown("This indicates strongly polarized views or insufficient overlap between arguments.")
             else:
-                # Display the identified common ground summary
-                st.subheader("Identified Common Ground")
+
                 st.markdown(common_ground_result["common_ground"])
 
-        # Step 8: Visualize Argument Map with Enhanced Aesthetics
+        ### Step 8: Visualize Argument Map with Enhanced Aesthetics##
         if common_ground_result["similarity_scores"] and common_ground_result["node_pairs"]:
-            st.subheader("Argument Map Visualization")
+            st.subheader("Visualizing Argument Similarity")
 
-            # Compute layout based on cosine similarity
             positions = compute_layout_with_similarity(
                 node_pairs=common_ground_result["node_pairs"],
                 similarity_scores=common_ground_result["similarity_scores"]
             )
 
-            # Create the argument map visualization with enhanced aesthetics
             fig = create_pretty_argument_map(
                 node_pairs=common_ground_result["node_pairs"],
                 similarity_scores=common_ground_result["similarity_scores"],
                 positions=positions
             )
+            st.markdown("The graph shows how different arguments (supporting, "
+                        "opposing, or neutral) are related to each other based"
+                        "on their similarity. Arguments that are closely related "
+                        "will appear connected, helping you see areas of agreement"
+                        "or overlap."
+                        )
 
-            # Display the plot with only rotation allowed
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("No connections found for visualization.")
-
 
         ## Step 9: Generating Final Insight ##
         with st.spinner("Creating final insight..."):
