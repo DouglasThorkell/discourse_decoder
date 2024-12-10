@@ -1,4 +1,5 @@
 streamlit
+os
 time
 langchain
 sentence-transformers
