@@ -16,7 +16,6 @@ from langchain.schema import HumanMessage, SystemMessage
 import re
 import plotly.graph_objects as go
 import networkx as nx
-import sys
 
 ## LLM initialization Function ##
 def get_llm(temperature, model):
