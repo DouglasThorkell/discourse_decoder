@@ -41,9 +41,13 @@ The application leverages a robust AI ecosystem to deliver seamless functionalit
 	Core technologies, such as: 
 
 o	Prompt engineering ensures precise argument extraction and debate structuring.
+
 o	LangChain orchestrates multi-agent workflows and retrieval processes.
+
 o	RAG (retrieval-augmented generation) enhances argument quality by integrating external evidence into AI-generated content. One example of this is the use of searching and scraping the internet using the Serper API key.
+
 o	Semantic Analysis detects thematic overlaps using embedding models (where a personal API key was used to utilize OpenAI and a free publicly accessible API key as used for SentenceTransformers).
+
 o	Visualization tools such as NetworkX and Plotly generate interactive visualizations for argument mapping
 
 	Methodologies, such as: 
