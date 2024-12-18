@@ -1,4 +1,4 @@
-# Import necessary libraries
+# Importing necessary libraries
 import streamlit as st
 import os
 import time
@@ -29,8 +29,10 @@ def get_llm(temperature, model):
 ## Get Valid URL Function ##
 def get_valid_url():
     url = st.text_input("Enter the URL of a webpage: ").strip()
+    # If no input, return None
     if not url:
         return None
+    # Ensuring URL starts with http or https
     if not re.match(r'^https?://', url):
         st.error("Invalid URL. Please ensure it starts with http or https.")
         return None
@@ -38,10 +40,13 @@ def get_valid_url():
 
 ## Fetch URL Function ##
 def fetch_url_content(url, retries=3, backoff_factor=1):
+    # Retry mechanism
     for attempt in range(retries):
         try:
             response = requests.get(url, timeout=10)
+            # Raising exception for bad HTTP responses
             response.raise_for_status()
+            # Returning the content
             return response.text
         except requests.RequestException as e:
             st.warning(f"**Attempt {attempt + 1}/{retries} failed:** {e}")
@@ -53,33 +58,41 @@ def fetch_url_content(url, retries=3, backoff_factor=1):
 
 ## Paragraph Based Chunking Function ##
 def paragraph_based_chunking(raw_text, max_chunk_size=3000, overlap=500):
+    # Splitting by double newline
     paragraphs = raw_text.split("\n\n")
     chunks = []
     current_chunk = ""
 
     for paragraph in paragraphs:
+        # Checking chunk size
         if len(current_chunk) + len(paragraph) <= max_chunk_size:
             current_chunk += paragraph + "\n\n"
         else:
+            # Adding completed chunk
             chunks.append(current_chunk.strip())
             current_chunk = paragraph[-overlap:] + paragraph
 
     if current_chunk:
+        # Adding any remaining text as a chunk
         chunks.append(current_chunk.strip())
 
+    # Converting to document objects
     return [Document(page_content=chunk) for chunk in chunks]
 
 ## Initializing Retrieval Chain Function ##
 def initialize_retrieval_chain_from_text(raw_text):
+    # Chunking the input text
     chunks = paragraph_based_chunking(raw_text)
 
     openai_api_key = os.environ.get('openai_api_key')
+    # Initializing embeddings
     embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
     vector_store = FAISS.from_documents(chunks, embeddings)
 
     llm = get_llm(temperature=0.7, model="gpt-4o-mini")
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
+    # Storing conversation history
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     crchain = ConversationalRetrievalChain.from_llm(
         llm=llm,
@@ -88,7 +101,7 @@ def initialize_retrieval_chain_from_text(raw_text):
     )
     return crchain
 
-## Extracting Main Arguments Function ##
+## Extract Main Arguments Function ##
 def extract_main_arguments(retrieval_chain):
     prompt = (
         "Summarize the main argument in the document in 100 words or less."
@@ -105,8 +118,9 @@ def extract_main_arguments(retrieval_chain):
 
     return result["answer"]
 
-## Extracting Three Stances Function ##
+## Extract Three Stances Function ##
 def extract_three_stances(retrieval_chain):
+    # Defining prompts for supportive, opposing, and neutral stances
     prompts = {
         "supportive": "Create a user-centered statement that supports the argument in the article."
                       "It should be a simple stance that is easily differentiated from other viewpoints."
@@ -128,6 +142,7 @@ def extract_three_stances(retrieval_chain):
                   "Your answer should be around 30 words.",
     }
 
+    # Fallback responses for edge cases
     fallback_responses = {
         "supportive": '"I believe there are strong points in the article’s perspective that deserve further exploration, and I generally lean toward agreeing with its stance."',
         "opposing": '"I believe there are valid concerns about the arguments presented, and I am inclined to challenge its conclusions."',
@@ -138,6 +153,7 @@ def extract_three_stances(retrieval_chain):
     for key, prompt in prompts.items():
         response = retrieval_chain({"question": prompt})["answer"]
 
+        # Fallback
         if ":" in response and response.lower().startswith("a user-centered statement"):
             response = response.split(":", 1)[-1].strip()
         cleaned_response = response.strip().strip('"')
@@ -175,6 +191,7 @@ supporting_researcher = Agent(
     backstory="You expand the Writer's argument by finding relevant examples, statistics, or case studies.",
     allow_delegation=False,
     verbose=False,
+    # Crew AI tools
     tools=[search_tool, scrape_tool]
 )
 supporting_debater = Agent(
@@ -188,6 +205,7 @@ supporting_writer_task = Task(
     description="Draft a clear, persuasive argument in favor of {topic} that is concise and provides a foundation for adding supporting evidence. Address any questions posed by the Moderator Crew: {moderator_question}.",
     expected_output="A concise argument supporting {topic} that the Researcher can expand on with evidence.",
     agent=supporting_writer,
+    # Asynchronous execution
     async_execution=True
 )
 supporting_researcher_task = Task(
@@ -197,6 +215,7 @@ supporting_researcher_task = Task(
                  "Ensure the evidence addresses any questions posed by the Moderator Crew: {moderator_question}.",
     expected_output="Relevant evidence in text form that strengthens the Writer's argument.",
     agent=supporting_researcher,
+    # Asynchronous execution
     async_execution=True
 )
 supporting_debater_task = Task(
@@ -224,6 +243,7 @@ opposing_researcher = Agent(
     backstory="You expand the Writer's counterargument by finding evidence, examples, or statistics that directly challenge the Supporting Crew's points.",
     allow_delegation=False,
     verbose=False,
+    # Crew AI tools
     tools=[search_tool, scrape_tool]
 )
 opposing_debater = Agent(
@@ -237,6 +257,7 @@ opposing_writer_task = Task(
     description="Draft a clear counterargument opposing {topic} that directly addresses the Supporting Crew's argument: {supporting_argument}. Also, address any questions posed by the Moderator Crew: {moderator_question}.",
     expected_output="A concise counterargument opposing {topic} that the Researcher can expand on with evidence.",
     agent=opposing_writer,
+    # Asynchronous execution
     async_execution=True
 )
 opposing_researcher_task = Task(
@@ -246,6 +267,7 @@ opposing_researcher_task = Task(
                 "Ensure the evidence also addresses any questions posed by the Moderator Crew: {moderator_question}.",
     expected_output="Relevant evidence in text form that strengthens the Writer's counterargument.",
     agent=opposing_researcher,
+    # Asynchronous execution
     async_execution=True
 )
 opposing_debater_task = Task(
@@ -309,6 +331,7 @@ moderation_crew = Crew(
 
 ## Common Ground Debate Function ##
 def find_common_ground_debate(supporting_arguments, opposing_arguments, similarity_threshold=0.5):
+    # Checking for empty arguments
     if not supporting_arguments or not opposing_arguments:
         return {
             "common_ground": "No significant common ground could be identified across the debate rounds.",
@@ -317,6 +340,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
         }
 
     ## Sentence Transformer Model ##
+    # Initializing Sentence Transformer model for embeddings
     try:
         model = SentenceTransformer('all-MiniLM-L6-v2')
     except Exception as e:
@@ -326,6 +350,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
             "node_pairs": []
         }
 
+    # Flattening arguments and associating them with their respective rounds
     all_supporting_sentences = []
     all_opposing_sentences = []
     for round_num, (supporting, opposing) in enumerate(zip(supporting_arguments, opposing_arguments), 1):
@@ -336,6 +361,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
             f"Round {round_num}: {sentence}" for sentence in opposing.split(". ") if sentence
         ]
 
+    # Computing embeddings for supporting and opposing arguments
     try:
         supporting_embeddings = model.encode(all_supporting_sentences, convert_to_tensor=True)
         opposing_embeddings = model.encode(all_opposing_sentences, convert_to_tensor=True)
@@ -346,8 +372,10 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
             "node_pairs": []
         }
 
+    # Calculating cosine similarity between arguments
     similarity_matrix = util.cos_sim(supporting_embeddings, opposing_embeddings)
 
+    # Identifying pairs of arguments with high similarity
     common_ground_pairs = []
     node_pairs = []
     similarity_scores = []
@@ -360,7 +388,8 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
 
             if i >= len(supporting_arguments) or j >= len(opposing_arguments):
                 continue
-
+                  
+            # Only including pairs that exceed the similarity threshold
             if similarity_score >= similarity_threshold:
                 pair = (
                     supporting_sentence.split(": ")[-1],
@@ -372,6 +401,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
                 similarity_scores.append(similarity_score)
 
     if common_ground_pairs:
+        # Summarizing common ground themes using the LLM
         themes = [pair[0] for pair in common_ground_pairs]
         unique_themes = list(set(themes))
 
@@ -389,6 +419,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
             "For example: 'Despite differing views on [opposing points], both sides agree on [common principles]. This shared understanding emphasizes [implication of agreement].'"
         )
 
+        # Fallback          
         try:
             messages = [
                 SystemMessage(content="You are an AI assistant that helps find common ground."),
@@ -411,6 +442,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
             "node_pairs": []
         }
 
+    # Returning a dictionary of common ground details
     return {
         "common_ground": common_ground_summary,
         "similarity_scores": similarity_scores,
@@ -419,6 +451,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
 
 ## Final Insight Function ##
 def generate_final_insight(common_ground):
+    # Checking for no common ground
     if "common_ground" not in st.session_state:
         st.session_state.common_ground = None
 
@@ -429,6 +462,7 @@ def generate_final_insight(common_ground):
             "underlying values or fostering a deeper dialogue."
         )
 
+    # Handling invalid input
     if not common_ground or not isinstance(common_ground, str) or not common_ground.strip():
         return "Error: Invalid common ground input."
 
@@ -450,8 +484,8 @@ def generate_final_insight(common_ground):
         "Limit your response to 50 words and ensure it is concise, actionable, and user-centered."
     )
 
+    # Fallback         
     try:
-        from langchain.schema import HumanMessage
 
         messages = [
             HumanMessage(content=prompt)
@@ -472,18 +506,23 @@ def generate_final_insight(common_ground):
 ### Visualization Layout Function ##
 def compute_layout_with_similarity(node_pairs, similarity_scores):
 
+    # Creating a graph
     G = nx.Graph()
     for (source, target), weight in zip(node_pairs, similarity_scores):
+        # Adding edges with weights
         G.add_edge(source, target, weight=weight)
 
+    # Computing layout
     positions = nx.spring_layout(G, weight="weight", seed=42, k=0.6)
     return positions
 
 ## Figure Function ##
 def create_pretty_argument_map(node_pairs, similarity_scores, positions):
 
+    # Initializing Plotly figure
     fig = go.Figure()
 
+    # Adding edges
     for (source, target), weight in zip(node_pairs, similarity_scores):
         x_start, y_start = positions[source]
         x_end, y_end = positions[target]
@@ -497,6 +536,7 @@ def create_pretty_argument_map(node_pairs, similarity_scores, positions):
             showlegend=False
         ))
 
+    # Adding nodes
     for node, (x, y) in positions.items():
         fig.add_trace(go.Scatter(
             x=[x], y=[y],
@@ -514,6 +554,7 @@ def create_pretty_argument_map(node_pairs, similarity_scores, positions):
             showlegend=False
         ))
 
+    # Configuring the layout
     fig.update_layout(
         title=dict(
             text="",
@@ -542,6 +583,7 @@ def main():
 
     st.title("Discourse Decoder")
 
+    # Adding a sidebar with information about the application
     with st.sidebar:
         st.title("About")
         st.markdown(
@@ -573,6 +615,7 @@ def main():
     ## Step 2: Fetching content from the URL ##
     with st.spinner("Fetching content..."):
         raw_content = fetch_url_content(url)
+    # Fallback
     if not raw_content:
         st.error("Failed to fetch content from the URL. Exiting...")
         return
@@ -660,6 +703,7 @@ def main():
                     moderator_output_clean = moderation_result.raw.replace(
                         f"**Moderator's Question:** {moderator_question}", "").strip()
 
+                    # Organizing arguments into two columns  
                     col1, col2 = st.columns(2)
 
                     with col1:
@@ -683,11 +727,11 @@ def main():
                         st.markdown(f"#### **Moderator's Question for Next Round**")
                         st.markdown(f"{moderator_question}")
 
-        ## Step 7: Find Common Ground ##
+        ## Step 7: Finding Common Ground ##
         st.subheader("Potential Avenues for Reconciliation")
         with st.spinner("Analyzing common ground..."):
             common_ground_result = find_common_ground_debate(supporting_arguments, opposing_arguments)
-
+            # Fallback
             if not common_ground_result["similarity_scores"] or not common_ground_result["node_pairs"]:
 
                 st.warning("No significant common ground or relationships could be visualized.")
@@ -696,7 +740,7 @@ def main():
 
                 st.markdown(common_ground_result["common_ground"])
 
-        ### Step 8: Visualize Argument Map with Enhanced Aesthetics##
+        ## Step 8: Visualizing Argument Map with Enhanced Aesthetics ##
         if common_ground_result["similarity_scores"] and common_ground_result["node_pairs"]:
             st.subheader("Visualizing Argument Similarity")
 
@@ -718,6 +762,7 @@ def main():
                         )
 
             st.plotly_chart(fig, use_container_width=True)
+        # Fallback
         else:
             st.warning("No connections found for visualization.")
 
