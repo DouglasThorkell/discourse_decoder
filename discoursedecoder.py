@@ -103,6 +103,7 @@ def initialize_retrieval_chain_from_text(raw_text):
 
 ## Extract Main Arguments Function ##
 def extract_main_arguments(retrieval_chain):
+  
     prompt = (
         "Summarize the main argument in the document in 100 words or less."
         "Your summary should:"
@@ -120,6 +121,7 @@ def extract_main_arguments(retrieval_chain):
 
 ## Extract Three Stances Function ##
 def extract_three_stances(retrieval_chain):
+
     # Defining prompts for supportive, opposing, and neutral stances
     prompts = {
         "supportive": "Create a user-centered statement that supports the argument in the article."
@@ -353,6 +355,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
     # Flattening arguments and associating them with their respective rounds
     all_supporting_sentences = []
     all_opposing_sentences = []
+
     for round_num, (supporting, opposing) in enumerate(zip(supporting_arguments, opposing_arguments), 1):
         all_supporting_sentences += [
             f"Round {round_num}: {sentence}" for sentence in supporting.split(". ") if sentence
@@ -418,8 +421,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
             "Use formal, balanced language and avoid overly technical jargon. Ensure the statement is clear, actionable, and limited to 100 words."
             "For example: 'Despite differing views on [opposing points], both sides agree on [common principles]. This shared understanding emphasizes [implication of agreement].'"
         )
-
-        # Fallback          
+          
         try:
             messages = [
                 SystemMessage(content="You are an AI assistant that helps find common ground."),
@@ -431,6 +433,7 @@ def find_common_ground_debate(supporting_arguments, opposing_arguments, similari
                 common_ground_summary = response.content
             elif isinstance(response, str):
                 common_ground_summary = response
+    # Fallback
             else:
                 common_ground_summary = "Unexpected response format from the LLM."
         except Exception as e:
@@ -483,14 +486,15 @@ def generate_final_insight(common_ground):
         "Begin this final sentence with: 'When talking to someone about [topic], you should...'"
         "Limit your response to 50 words and ensure it is concise, actionable, and user-centered."
     )
-
-    # Fallback         
+        
     try:
 
         messages = [
             HumanMessage(content=prompt)
         ]
         response = llm(messages)
+
+    # Fallback 
     except Exception as e:
         return f"Error generating response from LLM: {str(e)}"
 
@@ -731,6 +735,7 @@ def main():
         st.subheader("Potential Avenues for Reconciliation")
         with st.spinner("Analyzing common ground..."):
             common_ground_result = find_common_ground_debate(supporting_arguments, opposing_arguments)
+
             # Fallback
             if not common_ground_result["similarity_scores"] or not common_ground_result["node_pairs"]:
 
@@ -762,6 +767,7 @@ def main():
                         )
 
             st.plotly_chart(fig, use_container_width=True)
+
         # Fallback
         else:
             st.warning("No connections found for visualization.")
