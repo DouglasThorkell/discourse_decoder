@@ -153,7 +153,7 @@ def extract_three_stances(retrieval_chain):
     for key, prompt in prompts.items():
         response = retrieval_chain({"question": prompt})["answer"]
 
-        # Fallback
+        # Fallback in case of non-formatted responses
         if ":" in response and response.lower().startswith("a user-centered statement"):
             response = response.split(":", 1)[-1].strip()
         cleaned_response = response.strip().strip('"')
